@@ -4,6 +4,7 @@ import { VitePWA } from "vite-plugin-pwa";
 import path from "node:path";
 
 export default defineConfig({
+  base: "/webgame/",
   plugins: [
     react(),
     VitePWA({
@@ -17,8 +18,8 @@ export default defineConfig({
         background_color: "#0f172a",
         display: "fullscreen",
         orientation: "portrait",
-        start_url: "/",
-        scope: "/",
+        start_url: "/webgame/",
+        scope: "/webgame/",
         icons: [
           {
             src: "icon-192.svg",
