@@ -124,10 +124,15 @@ export function waitForOpponent(
   const sb = session.channel;
   return new Promise<void>((resolve, reject) => {
     let done = false;
+    let initialCheckTimer: ReturnType<typeof setTimeout> | null = null;
     const finish = (err?: Error): void => {
       if (done) return;
       done = true;
       clearTimeout(timer);
+      if (initialCheckTimer) clearTimeout(initialCheckTimer);
+      // Supabase Realtime はリスナー個別 off を提供しないため、
+      // done フラグで以後の check 処理をスキップする。
+      // 残ったリスナーは session.close() でチャンネルごと解放される。
       if (err) reject(err);
       else resolve();
     };
@@ -136,6 +141,7 @@ export function waitForOpponent(
       timeoutMs
     );
     const check = (): void => {
+      if (done) return;
       const state = sb.presenceState();
       const keys = Object.keys(state);
       const hasOther = keys.some((k) => k !== session.role);
@@ -144,6 +150,6 @@ export function waitForOpponent(
     sb.on("presence", { event: "sync" }, check);
     sb.on("presence", { event: "join" }, check);
     // 初期状態でも一度チェック
-    setTimeout(check, 200);
+    initialCheckTimer = setTimeout(check, 200);
   });
 }

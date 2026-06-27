@@ -98,12 +98,25 @@ export const useGameStore = create<GameStore>((set) => ({
   setStatus: (s) => set({ status: s }),
   setSelectedUnit: (u) => set({ selectedUnit: u }),
   setUnit: (u, patch) =>
-    set((state) => ({
-      units: {
-        ...state.units,
-        [u]: { ...state.units[u], ...patch },
-      },
-    })),
+    set((state) => {
+      const prev = state.units[u];
+      // どのフィールドも変わらないなら再生成しない (毎フレーム呼ばれるので)
+      let changed = false;
+      for (const k in patch) {
+        if ((prev as unknown as Record<string, unknown>)[k] !==
+            (patch as unknown as Record<string, unknown>)[k]) {
+          changed = true;
+          break;
+        }
+      }
+      if (!changed) return state;
+      return {
+        units: {
+          ...state.units,
+          [u]: { ...prev, ...patch },
+        },
+      };
+    }),
   setDodgeCooldown: (t) => set({ dodgeCooldownLeft: t }),
   setActiveSkill: (s, time) => set({ activeSkill: s, activeSkillTimeLeft: time }),
   setPaused: (p) => set({ paused: p }),

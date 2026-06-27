@@ -77,12 +77,18 @@ export function VirtualStick(): JSX.Element {
     base.addEventListener("pointermove", onMove, { passive: false });
     base.addEventListener("pointerup", onEnd);
     base.addEventListener("pointercancel", onEnd);
+    // setPointerCapture が失敗するブラウザ向けのフォールバック:
+    // 画面外で指を離したり別要素にイベントを取られても確実に解除する。
+    window.addEventListener("pointerup", onEnd);
+    window.addEventListener("pointercancel", onEnd);
 
     return () => {
       base.removeEventListener("pointerdown", onStart);
       base.removeEventListener("pointermove", onMove);
       base.removeEventListener("pointerup", onEnd);
       base.removeEventListener("pointercancel", onEnd);
+      window.removeEventListener("pointerup", onEnd);
+      window.removeEventListener("pointercancel", onEnd);
       setMove(0, 0);
     };
   }, []);

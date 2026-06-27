@@ -21,7 +21,7 @@ function ActionButton(props: ActionButtonProps): JSX.Element {
         e.preventDefault();
         if (!props.disabled) props.onPress();
       }}
-      className={`relative w-16 h-16 rounded-full border-2 flex flex-col items-center justify-center font-bold text-white shadow-lg active:scale-95 transition select-none ${
+      className={`relative w-[72px] h-[72px] rounded-full border-2 flex flex-col items-center justify-center font-bold text-white shadow-lg active:scale-95 transition select-none ${
         props.active
           ? "bg-amber-500/90 border-amber-200"
           : props.disabled

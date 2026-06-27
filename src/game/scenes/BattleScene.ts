@@ -154,7 +154,9 @@ export class BattleScene extends Phaser.Scene {
       this.cameras.main.setRotation(Math.PI);
     }
     this.fitCameraToMap();
-    this.scale.on("resize", () => this.fitCameraToMap());
+    const onResize = (): void => this.fitCameraToMap();
+    this.scale.on("resize", onResize);
+    this.events.once("shutdown", () => this.scale.off("resize", onResize));
 
     // ストア初期化
     const myHp = (guestFlip ? this.enemyGeneral : this.allyGeneral).hpMax;
