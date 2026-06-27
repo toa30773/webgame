@@ -179,32 +179,24 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
-   * マップ全体が画面に収まるようにカメラズームを調整し、中央に固定する。
-   * 画面サイズが変わるたびに呼び出す。
+   * マップ全体が画面に収まるようにカメラのビューポートとズームを調整し、
+   * 上下HUDを避けた中央エリアに描画する。画面サイズが変わるたびに呼び出す。
    */
   private fitCameraToMap(): void {
     const mapW = metersToPx(MAP_WIDTH);
     const mapH = metersToPx(MAP_HEIGHT);
-    const screenW = this.scale.width;
-    const screenH = this.scale.height;
-    // 上下のHUDで使われるおおよその割合 (TopBar+下部コントロール)
-    // 上: ~64px (TopBar), 下: ~190px (アクションボタン + 仮想スティック領域)
-    // 縦余白の合計を画面高の最大40%に制限しつつ、目安として固定値も使う
-    const topReserved = 72;
-    const bottomReserved = Math.min(screenH * 0.32, 220);
+    const screenW = Math.max(1, this.scale.width);
+    const screenH = Math.max(1, this.scale.height);
+    // 上下HUDの予約領域 (TopBar / 仮想スティック・アクションボタン)
+    const topReserved = Math.min(screenH * 0.12, 80);
+    const bottomReserved = Math.min(screenH * 0.28, 200);
     const availableH = Math.max(120, screenH - topReserved - bottomReserved);
-    const availableW = screenW * 0.96;
-    const zoomW = availableW / mapW;
-    const zoomH = availableH / mapH;
-    const zoom = Math.min(zoomW, zoomH);
+    // カメラ自体を「使用可能エリア」の矩形に閉じ込める
+    this.cameras.main.setViewport(0, topReserved, screenW, availableH);
+    const zoom = Math.min((screenW * 0.98) / mapW, availableH / mapH);
     this.cameras.main.setZoom(zoom);
-    // マップ中央をカメラ中央に
+    // 回転(180°ゲスト視点)があっても centerOn はビューポート中央に世界の指定点を置く
     this.cameras.main.centerOn(mapW / 2, mapH / 2);
-    // 画面内の縦位置: マップ中央が「使用可能エリア中央」に来るよう scrollY を補正
-    const visibleCenterY = topReserved + availableH / 2;
-    const screenCenterY = screenH / 2;
-    const yOffset = (visibleCenterY - screenCenterY) / zoom;
-    this.cameras.main.scrollY -= yOffset;
   }
 
   private attachNetSession(): void {
