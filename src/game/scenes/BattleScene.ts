@@ -148,18 +148,13 @@ export class BattleScene extends Phaser.Scene {
 
     this.spawnInitialUnits();
 
-    // カメラ
+    // カメラ: クラロワ風にマップ全体が常に画面内に収まる
     this.cameras.main.setBounds(0, 0, metersToPx(MAP_WIDTH), metersToPx(MAP_HEIGHT));
     if (guestFlip) {
-      // 画面を180°回転 → ゲスト自身の将軍(enemyGeneral)が画面下
       this.cameras.main.setRotation(Math.PI);
-      this.cameras.main.startFollow(this.enemyGeneral.body, true, 0.1, 0.1);
-      // 回転後は y 方向が反転、自将を画面下40%に置くため offset 符号反転
-      this.cameras.main.setFollowOffset(0, this.scale.height * 0.1);
-    } else {
-      this.cameras.main.startFollow(this.allyGeneral.body, true, 0.1, 0.1);
-      this.cameras.main.setFollowOffset(0, -this.scale.height * 0.1);
     }
+    this.fitCameraToMap();
+    this.scale.on("resize", () => this.fitCameraToMap());
 
     // ストア初期化
     const myHp = (guestFlip ? this.enemyGeneral : this.allyGeneral).hpMax;
@@ -181,6 +176,35 @@ export class BattleScene extends Phaser.Scene {
         this.netUnsubscribe = null;
       }
     });
+  }
+
+  /**
+   * マップ全体が画面に収まるようにカメラズームを調整し、中央に固定する。
+   * 画面サイズが変わるたびに呼び出す。
+   */
+  private fitCameraToMap(): void {
+    const mapW = metersToPx(MAP_WIDTH);
+    const mapH = metersToPx(MAP_HEIGHT);
+    const screenW = this.scale.width;
+    const screenH = this.scale.height;
+    // 上下のHUDで使われるおおよその割合 (TopBar+下部コントロール)
+    // 上: ~64px (TopBar), 下: ~190px (アクションボタン + 仮想スティック領域)
+    // 縦余白の合計を画面高の最大40%に制限しつつ、目安として固定値も使う
+    const topReserved = 72;
+    const bottomReserved = Math.min(screenH * 0.32, 220);
+    const availableH = Math.max(120, screenH - topReserved - bottomReserved);
+    const availableW = screenW * 0.96;
+    const zoomW = availableW / mapW;
+    const zoomH = availableH / mapH;
+    const zoom = Math.min(zoomW, zoomH);
+    this.cameras.main.setZoom(zoom);
+    // マップ中央をカメラ中央に
+    this.cameras.main.centerOn(mapW / 2, mapH / 2);
+    // 画面内の縦位置: マップ中央が「使用可能エリア中央」に来るよう scrollY を補正
+    const visibleCenterY = topReserved + availableH / 2;
+    const screenCenterY = screenH / 2;
+    const yOffset = (visibleCenterY - screenCenterY) / zoom;
+    this.cameras.main.scrollY -= yOffset;
   }
 
   private attachNetSession(): void {
