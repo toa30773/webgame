@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { CommandType, MoraleSkillType, UnitType } from "@/types/common";
 
 export type GameStatus = "playing" | "victory" | "defeat";
+export type GamePhase = "placement" | "battle";
 
 interface UnitHudState {
   type: UnitType;
@@ -34,6 +35,10 @@ interface GameStore {
   uniqueCooldownLeft: number;
   uniqueCooldownMax: number;
   uniqueActiveTime: number;
+  phase: GamePhase;
+  placementTimeLeft: number;
+  placementSelected: UnitType | null;
+  placementConfirmSeq: number;
 
   setAllyGeneralHp: (hp: number) => void;
   setEnemyGeneralHp: (hp: number) => void;
@@ -49,6 +54,10 @@ interface GameStore {
   setHapticsEnabled: (e: boolean) => void;
   setSfxEnabled: (e: boolean) => void;
   setUniqueState: (cdLeft: number, cdMax: number, activeTime: number) => void;
+  setPhase: (p: GamePhase) => void;
+  setPlacementTimeLeft: (t: number) => void;
+  setPlacementSelected: (u: UnitType | null) => void;
+  requestPlacementConfirm: () => void;
   reset: (allyMaxHp: number, enemyMaxHp: number, matchSec: number) => void;
 }
 
@@ -90,6 +99,10 @@ export const useGameStore = create<GameStore>((set) => ({
   uniqueCooldownLeft: 0,
   uniqueCooldownMax: 1,
   uniqueActiveTime: 0,
+  phase: "placement",
+  placementTimeLeft: 30,
+  placementSelected: null,
+  placementConfirmSeq: 0,
 
   setAllyGeneralHp: (hp) => set({ allyGeneralHp: Math.max(0, hp) }),
   setEnemyGeneralHp: (hp) => set({ enemyGeneralHp: Math.max(0, hp) }),
@@ -129,6 +142,11 @@ export const useGameStore = create<GameStore>((set) => ({
       uniqueCooldownMax: cdMax,
       uniqueActiveTime: activeTime,
     }),
+  setPhase: (p) => set({ phase: p }),
+  setPlacementTimeLeft: (t) => set({ placementTimeLeft: t }),
+  setPlacementSelected: (u) => set({ placementSelected: u }),
+  requestPlacementConfirm: () =>
+    set((s) => ({ placementConfirmSeq: s.placementConfirmSeq + 1 })),
   reset: (allyMaxHp, enemyMaxHp, matchSec) =>
     set({
       allyGeneralHp: allyMaxHp,
@@ -143,6 +161,9 @@ export const useGameStore = create<GameStore>((set) => ({
       activeSkill: null,
       activeSkillTimeLeft: 0,
       paused: false,
+      phase: "placement",
+      placementTimeLeft: 30,
+      placementSelected: null,
       units: {
         infantry: makeUnit("infantry", 1000, 10),
         spear: makeUnit("spear", 900, 8),

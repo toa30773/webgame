@@ -32,7 +32,13 @@ import type {
 } from "@/types/common";
 import { General } from "@/game/generals/General";
 import { Unit } from "@/game/units/Unit";
-import { Renderer3D } from "@/game/render3d/Renderer3D";
+import {
+  Renderer3D,
+  ALLY_PLACEMENT_ZONE,
+  ENEMY_PLACEMENT_ZONE,
+  clampToZone,
+  isInZone,
+} from "@/game/render3d/Renderer3D";
 import { UnitAI, applyRallyMovement } from "@/game/ai/UnitAI";
 import { EnemyGeneralAI } from "@/game/ai/EnemyGeneralAI";
 import { MoraleSystem } from "@/game/morale/MoraleSystem";
@@ -95,6 +101,10 @@ export class BattleScene extends Phaser.Scene {
 
   // 3D レンダラ
   private renderer3D: Renderer3D | null = null;
+
+  // 配置フェーズ
+  private placementTimeLeft = 30;
+  private lastPlacementConfirmSeq = 0;
 
   // 通信
   private snapshotInterval = 0.1; // 10Hz
@@ -178,6 +188,19 @@ export class BattleScene extends Phaser.Scene {
       .reset(myHp, oppHp, MATCH_DURATION_SEC);
     this.syncHud();
 
+    // 配置フェーズ初期化
+    if (this.mode === "ai") {
+      this.setupPlacementPhase();
+    } else {
+      // オンラインは現状配置フェーズ未対応 → すぐ戦闘へ
+      useGameStore.getState().setPhase("battle");
+    }
+
+    // タップ入力 (配置フェーズの部隊配置に使用)
+    this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
+      this.onPointerDown(p);
+    });
+
     // ネット接続
     if (this.mode !== "ai") {
       this.attachNetSession();
@@ -213,6 +236,108 @@ export class BattleScene extends Phaser.Scene {
     this.cameras.main.setZoom(zoom);
     // 回転(180°ゲスト視点)があっても centerOn はビューポート中央に世界の指定点を置く
     this.cameras.main.centerOn(mapW / 2, mapH / 2);
+  }
+
+  private setupPlacementPhase(): void {
+    const store = useGameStore.getState();
+    store.setPhase("placement");
+    store.setPlacementSelected(null);
+    this.placementTimeLeft = 30;
+    store.setPlacementTimeLeft(30);
+    this.lastPlacementConfirmSeq = store.placementConfirmSeq;
+
+    // 自軍配置エリアの中央に部隊をプリセット
+    const allyZ = ALLY_PLACEMENT_ZONE.cz;
+    const allyOffsets: Array<{ type: UnitType; dx: number }> = [
+      { type: "cavalry", dx: -6 },
+      { type: "infantry", dx: -2 },
+      { type: "spear", dx: 2 },
+      { type: "archer", dx: 6 },
+    ];
+    for (const { type, dx } of allyOffsets) {
+      const u = this.allyUnits.find((x) => x.type === type);
+      if (u) {
+        u.setPosition({
+          x: ALLY_PLACEMENT_ZONE.cx + dx,
+          y: allyZ,
+        });
+      }
+    }
+
+    // 敵側はランダムに配置 (フォグで隠れている)
+    const enemyZ = ENEMY_PLACEMENT_ZONE.cz;
+    const enemyTypes: UnitType[] = ["infantry", "spear", "archer", "cavalry"];
+    const enemyXSlots = [-6, -2, 2, 6];
+    // ランダム並び
+    for (let i = enemyXSlots.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const t = enemyXSlots[i];
+      enemyXSlots[i] = enemyXSlots[j];
+      enemyXSlots[j] = t;
+    }
+    enemyTypes.forEach((t, i) => {
+      const u = this.enemyUnits.find((x) => x.type === t);
+      if (u) {
+        u.setPosition({
+          x: ENEMY_PLACEMENT_ZONE.cx + enemyXSlots[i] + (Math.random() - 0.5) * 1.5,
+          y: enemyZ + (Math.random() - 0.5) * 2,
+        });
+      }
+    });
+
+    // 3D オーバーレイ表示 (自分側ゾーンをハイライト、敵半分をフォグ)
+    this.renderer3D?.showPlacementOverlay(
+      ALLY_PLACEMENT_ZONE,
+      ENEMY_PLACEMENT_ZONE.cz
+    );
+  }
+
+  private startBattlePhase(): void {
+    if (useGameStore.getState().phase === "battle") return;
+    this.renderer3D?.hidePlacementOverlay();
+    useGameStore.getState().setPhase("battle");
+    useGameStore.getState().setPlacementSelected(null);
+  }
+
+  private updatePlacementPhase(dt: number): void {
+    const store = useGameStore.getState();
+    // 確定リクエスト検知
+    if (store.placementConfirmSeq !== this.lastPlacementConfirmSeq) {
+      this.lastPlacementConfirmSeq = store.placementConfirmSeq;
+      this.startBattlePhase();
+      return;
+    }
+    this.placementTimeLeft = Math.max(0, this.placementTimeLeft - dt);
+    store.setPlacementTimeLeft(this.placementTimeLeft);
+    if (this.placementTimeLeft <= 0) {
+      this.startBattlePhase();
+      return;
+    }
+    // 配置中もユニットのアニメだけ進める (静止で立っている姿)
+    for (const u of this.allyUnits) u.tick(dt);
+    for (const u of this.enemyUnits) u.tick(dt);
+    this.allyGeneral.tick(dt);
+    this.enemyGeneral.tick(dt);
+    this.renderer3D?.render();
+  }
+
+  private onPointerDown(pointer: Phaser.Input.Pointer): void {
+    if (useGameStore.getState().phase !== "placement") return;
+    if (this.mode === "guest") return;
+    const selected = useGameStore.getState().placementSelected;
+    if (!selected) return;
+    if (!this.renderer3D) return;
+    const ground = this.renderer3D.screenToGround(pointer.x, pointer.y);
+    if (!ground) return;
+    const zone = ALLY_PLACEMENT_ZONE;
+    if (!isInZone(zone, ground.x, ground.z)) return;
+    const clamped = clampToZone(zone, ground.x, ground.z);
+    const u = this.allyUnits.find((x) => x.type === selected);
+    if (u) {
+      u.setPosition({ x: clamped.x, y: clamped.z });
+    }
+    // 配置後は選択解除
+    useGameStore.getState().setPlacementSelected(null);
   }
 
   private attachNetSession(): void {
@@ -330,6 +455,12 @@ export class BattleScene extends Phaser.Scene {
     if (this.gameOver) return;
     if (useGameStore.getState().paused && this.mode === "ai") {
       this.syncHud();
+      return;
+    }
+
+    // 配置フェーズ: 戦闘シミュレーションをスキップしてタイマー進行のみ
+    if (useGameStore.getState().phase === "placement") {
+      this.updatePlacementPhase(dt);
       return;
     }
 

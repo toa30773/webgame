@@ -7,6 +7,50 @@ import {
   MAP_WIDTH,
 } from "@/game/map/mapConfig";
 
+export interface PlacementZone {
+  /** ワールド X 中央 */
+  cx: number;
+  /** ワールド Z 中央 */
+  cz: number;
+  /** 半幅 (X 方向) */
+  halfX: number;
+  /** 半幅 (Z 方向) */
+  halfZ: number;
+}
+
+export const ALLY_PLACEMENT_ZONE: PlacementZone = {
+  cx: MAP_WIDTH / 2,
+  cz: ALLY_BASE_Y - 5,
+  halfX: 9,
+  halfZ: 4,
+};
+
+export const ENEMY_PLACEMENT_ZONE: PlacementZone = {
+  cx: MAP_WIDTH / 2,
+  cz: ENEMY_BASE_Y + 5,
+  halfX: 9,
+  halfZ: 4,
+};
+
+export function clampToZone(zone: PlacementZone, x: number, z: number): {
+  x: number;
+  z: number;
+} {
+  return {
+    x: Math.max(zone.cx - zone.halfX, Math.min(zone.cx + zone.halfX, x)),
+    z: Math.max(zone.cz - zone.halfZ, Math.min(zone.cz + zone.halfZ, z)),
+  };
+}
+
+export function isInZone(zone: PlacementZone, x: number, z: number): boolean {
+  return (
+    x >= zone.cx - zone.halfX &&
+    x <= zone.cx + zone.halfX &&
+    z >= zone.cz - zone.halfZ &&
+    z <= zone.cz + zone.halfZ
+  );
+}
+
 /**
  * Three.js による戦場の描画レイヤー。
  * - Phaser キャンバスは入力 / ゲームロジックのみを担い、視覚はこちらが受け持つ。
@@ -22,6 +66,11 @@ export class Renderer3D {
   private readonly flipView: boolean;
   private viewportWidth = 1;
   private viewportHeight = 1;
+
+  private readonly raycaster = new THREE.Raycaster();
+  private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  private placementOverlay: THREE.Group | null = null;
+  private enemyFog: THREE.Mesh | null = null;
 
   public constructor(parent: HTMLElement, options: { flipView?: boolean } = {}) {
     this.flipView = options.flipView === true;
@@ -187,6 +236,89 @@ export class Renderer3D {
 
   public render(): void {
     this.renderer.render(this.scene, this.camera);
+  }
+
+  /**
+   * 配置フェーズ用に、自軍ゾーンをハイライトし、敵側を黒い霧で覆う。
+   * ownZone は自軍配置エリア、enemySideZ は敵半分のZ中心。
+   */
+  public showPlacementOverlay(ownZone: PlacementZone, enemySideZ: number): void {
+    this.hidePlacementOverlay();
+    const group = new THREE.Group();
+
+    // 自軍ゾーンの黄色ハイライト (床に薄く)
+    const zoneGeom = new THREE.PlaneGeometry(ownZone.halfX * 2, ownZone.halfZ * 2);
+    const zoneMat = new THREE.MeshBasicMaterial({
+      color: 0xfacc15,
+      transparent: true,
+      opacity: 0.18,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const zone = new THREE.Mesh(zoneGeom, zoneMat);
+    zone.rotation.x = -Math.PI / 2;
+    zone.position.set(ownZone.cx, 0.05, ownZone.cz);
+    group.add(zone);
+
+    // ゾーンの境界線 (リング状の四角)
+    const edges = new THREE.EdgesGeometry(zoneGeom);
+    const lineMat = new THREE.LineBasicMaterial({
+      color: 0xfde047,
+      transparent: true,
+      opacity: 0.85,
+    });
+    const border = new THREE.LineSegments(edges, lineMat);
+    border.rotation.x = -Math.PI / 2;
+    border.position.set(ownZone.cx, 0.07, ownZone.cz);
+    group.add(border);
+
+    // 敵半分を覆うフォグプレーン
+    const fogGeom = new THREE.PlaneGeometry(MAP_WIDTH + 8, MAP_HEIGHT * 0.55);
+    const fogMat = new THREE.MeshBasicMaterial({
+      color: 0x000000,
+      transparent: true,
+      opacity: 0.82,
+      depthWrite: false,
+    });
+    this.enemyFog = new THREE.Mesh(fogGeom, fogMat);
+    this.enemyFog.rotation.x = -Math.PI / 2;
+    this.enemyFog.position.set(MAP_WIDTH / 2, 3.5, enemySideZ);
+    group.add(this.enemyFog);
+
+    // フォグに「？」マーク的な装飾 (旗付近に未知を示すテキスト)
+    void this.flipView;
+
+    this.placementOverlay = group;
+    this.scene.add(group);
+  }
+
+  public hidePlacementOverlay(): void {
+    if (!this.placementOverlay) return;
+    this.scene.remove(this.placementOverlay);
+    this.placementOverlay.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (mesh.geometry) mesh.geometry.dispose();
+      const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+      if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+      else if (mat) mat.dispose();
+    });
+    this.placementOverlay = null;
+    this.enemyFog = null;
+  }
+
+  /**
+   * 画面ピクセル座標を地面 (Y=0) のワールド座標 (X, Z) に変換。
+   */
+  public screenToGround(sx: number, sy: number): { x: number; z: number } | null {
+    const w = this.canvas.clientWidth || this.viewportWidth;
+    const h = this.canvas.clientHeight || this.viewportHeight;
+    const ndc = new THREE.Vector2((sx / w) * 2 - 1, -(sy / h) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const out = new THREE.Vector3();
+    if (this.raycaster.ray.intersectPlane(this.groundPlane, out)) {
+      return { x: out.x, z: out.z };
+    }
+    return null;
   }
 
   public dispose(): void {
