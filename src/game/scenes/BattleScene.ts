@@ -3,8 +3,6 @@ import {
   ALLY_BASE_Y,
   BASE_RADIUS,
   ENEMY_BASE_Y,
-  LANE_SWITCH_Y_MAX,
-  LANE_SWITCH_Y_MIN,
   LANE_X,
   MAP_HEIGHT,
   MAP_WIDTH,
@@ -34,6 +32,7 @@ import type {
 } from "@/types/common";
 import { General } from "@/game/generals/General";
 import { Unit } from "@/game/units/Unit";
+import { Renderer3D } from "@/game/render3d/Renderer3D";
 import { UnitAI, applyRallyMovement } from "@/game/ai/UnitAI";
 import { EnemyGeneralAI } from "@/game/ai/EnemyGeneralAI";
 import { MoraleSystem } from "@/game/morale/MoraleSystem";
@@ -94,6 +93,9 @@ export class BattleScene extends Phaser.Scene {
   private remoteDodgeSeqSeen = 0;
   private remoteUniqueSeqSeen = 0;
 
+  // 3D レンダラ
+  private renderer3D: Renderer3D | null = null;
+
   // 通信
   private snapshotInterval = 0.1; // 10Hz
   private snapshotTimer = 0;
@@ -112,10 +114,15 @@ export class BattleScene extends Phaser.Scene {
     const battleMode = useSessionStore.getState().battleMode;
     this.mode = battleMode.kind === "spectator" ? "ai" : battleMode.kind;
 
-    this.cameras.main.setBackgroundColor("#10171f");
-    this.drawMap();
+    // Phaser キャンバスは透過。3D 側がワールドを描画する。
+    this.cameras.main.setBackgroundColor("rgba(0,0,0,0)");
 
     const guestFlip = this.mode === "guest";
+
+    // 3D レンダラを Phaser キャンバスの親に追加 (背面)
+    const parent = this.game.canvas.parentElement ?? document.body;
+    this.renderer3D = new Renderer3D(parent, { flipView: guestFlip });
+    this.renderer3D.resize(this.scale.width, this.scale.height);
     const myGeneralId = useSessionStore.getState().myGeneral;
     // 敵将ID: AI モードはランダム、オンラインはとりあえず warrior (将来は相手の選択を受信)
     const enemyGeneralId: GeneralId =
@@ -133,6 +140,7 @@ export class BattleScene extends Phaser.Scene {
         colorFaction: guestFlip ? "enemy" : "ally",
         flipText: guestFlip,
         generalId: allyId,
+        renderer3D: this.renderer3D,
       }
     );
     this.enemyGeneral = new General(
@@ -143,6 +151,7 @@ export class BattleScene extends Phaser.Scene {
         colorFaction: guestFlip ? "ally" : "enemy",
         flipText: guestFlip,
         generalId: enemyId,
+        renderer3D: this.renderer3D,
       }
     );
 
@@ -154,7 +163,10 @@ export class BattleScene extends Phaser.Scene {
       this.cameras.main.setRotation(Math.PI);
     }
     this.fitCameraToMap();
-    const onResize = (): void => this.fitCameraToMap();
+    const onResize = (): void => {
+      this.fitCameraToMap();
+      this.renderer3D?.resize(this.scale.width, this.scale.height);
+    };
     this.scale.on("resize", onResize);
     this.events.once("shutdown", () => this.scale.off("resize", onResize));
 
@@ -177,6 +189,8 @@ export class BattleScene extends Phaser.Scene {
         this.netUnsubscribe();
         this.netUnsubscribe = null;
       }
+      this.renderer3D?.dispose();
+      this.renderer3D = null;
     });
   }
 
@@ -263,75 +277,6 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
-  private drawMap(): void {
-    const W = metersToPx(MAP_WIDTH);
-    const H = metersToPx(MAP_HEIGHT);
-    // 背景
-    const g = this.add.graphics();
-    g.fillStyle(0x1f2937, 1);
-    g.fillRect(0, 0, W, H);
-    g.lineStyle(2, 0x334155, 1);
-    g.strokeRect(0, 0, W, H);
-
-    // レーン (左/中/右)
-    const laneWidth = metersToPx(4.5);
-    const laneColor = 0x223047;
-    for (const lane of ["left", "center", "right"] as Lane[]) {
-      g.fillStyle(laneColor, 1);
-      g.fillRect(metersToPx(LANE_X[lane]) - laneWidth / 2, 0, laneWidth, H);
-    }
-
-    // レーン変更可能帯 (中央付近)
-    g.fillStyle(0x2c3e58, 1);
-    g.fillRect(
-      0,
-      metersToPx(LANE_SWITCH_Y_MIN),
-      W,
-      metersToPx(LANE_SWITCH_Y_MAX - LANE_SWITCH_Y_MIN)
-    );
-
-    const guestFlip = this.mode === "guest";
-    // 本陣の色 (ゲスト視点では上下入れ替わるので色も入れ替える)
-    const topColor = guestFlip ? 0x3b82f6 : 0xef4444;
-    const topFill = guestFlip ? 0x172554 : 0x451a1a;
-    const bottomColor = guestFlip ? 0xef4444 : 0x3b82f6;
-    const bottomFill = guestFlip ? 0x451a1a : 0x172554;
-
-    // 本陣 (上)
-    g.lineStyle(3, topColor, 0.8);
-    g.fillStyle(topFill, 1);
-    g.fillCircle(metersToPx(LANE_X.center), metersToPx(ENEMY_BASE_Y), metersToPx(BASE_RADIUS));
-    g.strokeCircle(metersToPx(LANE_X.center), metersToPx(ENEMY_BASE_Y), metersToPx(BASE_RADIUS));
-    // 本陣 (下)
-    g.lineStyle(3, bottomColor, 0.8);
-    g.fillStyle(bottomFill, 1);
-    g.fillCircle(metersToPx(LANE_X.center), metersToPx(ALLY_BASE_Y), metersToPx(BASE_RADIUS));
-    g.strokeCircle(metersToPx(LANE_X.center), metersToPx(ALLY_BASE_Y), metersToPx(BASE_RADIUS));
-
-    // ラベル (ゲストは入れ替え)
-    const topLabel = guestFlip ? "自軍本陣" : "敵本陣";
-    const bottomLabel = guestFlip ? "敵本陣" : "自軍本陣";
-    const topTextColor = guestFlip ? "#bfdbfe" : "#fecaca";
-    const bottomTextColor = guestFlip ? "#fecaca" : "#bfdbfe";
-
-    const topText = this.add
-      .text(metersToPx(LANE_X.center), metersToPx(ENEMY_BASE_Y), topLabel, {
-        fontSize: "14px",
-        color: topTextColor,
-      })
-      .setOrigin(0.5);
-    const bottomText = this.add
-      .text(metersToPx(LANE_X.center), metersToPx(ALLY_BASE_Y), bottomLabel, {
-        fontSize: "14px",
-        color: bottomTextColor,
-      })
-      .setOrigin(0.5);
-    if (guestFlip) {
-      topText.setRotation(Math.PI);
-      bottomText.setRotation(Math.PI);
-    }
-  }
-
   private spawnInitialUnits(): void {
     // 各部隊の初期配置: レーンとレーン内オフセット(0=中央, -1/+1=サイド)
     const layout: Record<
@@ -370,9 +315,11 @@ export class BattleScene extends Phaser.Scene {
     const guestFlip = this.mode === "guest";
     const colorFaction: Faction =
       guestFlip ? (faction === "ally" ? "enemy" : "ally") : faction;
+    if (!this.renderer3D) throw new Error("Renderer3D not initialized");
     const unit = new Unit(this, type, faction, lane, { x, y: baseY }, {
       colorFaction,
       flipText: guestFlip,
+      renderer3D: this.renderer3D,
     });
     unit.setCommand("advance");
     return unit;
@@ -467,6 +414,13 @@ export class BattleScene extends Phaser.Scene {
     }
     applyRallyMovement(this.allyUnits, this.allyGeneral, dt, "ally");
     applyRallyMovement(this.enemyUnits, this.enemyGeneral, dt, "enemy");
+
+    // ビジュアル (位置同期＋歩行アニメ)
+    for (const u of this.allyUnits) u.tick(dt);
+    for (const u of this.enemyUnits) u.tick(dt);
+    this.allyGeneral.tick(dt);
+    this.enemyGeneral.tick(dt);
+    this.renderer3D?.render();
 
     // 戦闘解決
     this.resolveUnitAttacks(this.allyUnits, this.enemyUnits, this.allyGeneral, this.enemyGeneral, this.allyMorale, dt);

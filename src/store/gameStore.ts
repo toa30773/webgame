@@ -72,7 +72,7 @@ export const useGameStore = create<GameStore>((set) => ({
   enemyGeneralHpMax: 3000,
   morale: 0,
   moraleMax: 100,
-  matchTimeLeft: 480,
+  matchTimeLeft: 240,
   status: "playing",
   selectedUnit: null,
   units: {

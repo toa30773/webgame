@@ -131,7 +131,7 @@ export const MORALE_SKILLS: Record<MoraleSkillType, MoraleSkillDef> = {
   },
 };
 
-export const MATCH_DURATION_SEC = 8 * 60;
+export const MATCH_DURATION_SEC = 4 * 60;
 
 export const RESPAWN_SEC = 20;
 export const RESPAWN_IN_BASE_SEC = 15;
