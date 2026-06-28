@@ -6,10 +6,10 @@ import { LANE_X, ALLY_BASE_Y, ENEMY_BASE_Y } from "@/game/map/mapConfig";
 
 /**
  * 敵将AI
- * - 自軍部隊と歩調を合わせて前進
- * - 味方が前線で戦闘中なら参戦
+ * - 自軍部隊の前線に合わせて進む (単騎で突っ込まない)
+ * - プレイヤー将軍が孤立 / 前線を越えたら攻めに切り替え
  * - HP25%以下で後退
- * - 敵を攻撃範囲に捉えたら通常攻撃
+ * - 攻撃範囲に入っていれば通常攻撃
  */
 export class EnemyGeneralAI {
   public static update(
@@ -44,22 +44,47 @@ export class EnemyGeneralAI {
     const hpRatio = general.hp / general.hpMax;
     let goal: Vec2;
     if (hpRatio < 0.25) {
-      // 後退して味方本陣近くへ
+      // 後退して自軍本陣近くへ
       goal = { x: LANE_X.center, y: ENEMY_BASE_Y + 4 };
     } else {
-      // 味方部隊が敵将と接近戦中なら参戦
-      const allyEngaged = allies.find(
-        (u) => u.alive && distance(u.position, tpos) < 5
-      );
-      if (allyEngaged) {
+      const aliveAllies = allies.filter((u) => u.alive);
+      if (aliveAllies.length === 0) {
+        // 部隊が全滅 → 最後の抵抗で敵将に向かう
         goal = tpos;
-      } else if (hpRatio < 0.5 && d > 12) {
-        // 半分以下で距離があるなら味方と合流
-        const nearest = nearestAliveAlly(pos, allies);
-        goal = nearest ?? tpos;
       } else {
-        // 主目標: プレイヤー将軍
-        goal = tpos;
+        // 自軍前線 (敵側にとっては Y最大の味方ユニット)
+        const leadingY = aliveAllies.reduce(
+          (best, u) => Math.max(best, u.position.y),
+          -Infinity
+        );
+        // プレイヤー将軍まわりに何体の味方がいるか
+        const supportNear = aliveAllies.filter(
+          (u) => distance(u.position, tpos) < 5
+        ).length;
+
+        // 攻めに切り替える条件:
+        // 1. プレイヤーがすぐ近く (向こうから来た) → 殴り合う
+        // 2. 前線がプレイヤー将軍まで到達 + 味方が周囲にいる
+        // 3. プレイヤー将軍がHP低下していて、味方の支援が1体でもある
+        const playerHpRatio = target.hp / target.hpMax;
+        const wantsEngage =
+          d < 4 ||
+          (leadingY >= tpos.y - 3 && supportNear >= 1) ||
+          (playerHpRatio < 0.4 && supportNear >= 1 && d < 9);
+
+        if (wantsEngage) {
+          goal = tpos;
+        } else {
+          // 前線の少し後ろに付く。プレイヤーと横位置を揃える。
+          const followY = leadingY - 2;
+          const minY = ENEMY_BASE_Y + 2;
+          const maxY = tpos.y - 1.5;
+          const goalY = Math.max(minY, Math.min(followY, maxY));
+          // 横はプレイヤー将軍と少しオフセットを保ち、レーン中央寄りに
+          const towardCenter =
+            tpos.x + (LANE_X.center - tpos.x) * 0.3;
+          goal = { x: towardCenter, y: goalY };
+        }
       }
     }
 
@@ -70,27 +95,13 @@ export class EnemyGeneralAI {
     const dx = goal.x - pos.x;
     const dy = goal.y - pos.y;
     const dist = Math.hypot(dx, dy);
-    if (dist < 0.05) return;
+    if (dist < 0.1) return;
     const step = Math.min(speed * dt, dist);
     general.setPosition({
       x: pos.x + (dx / dist) * step,
       y: pos.y + (dy / dist) * step,
     });
   }
-}
-
-function nearestAliveAlly(pos: Vec2, allies: Unit[]): Vec2 | null {
-  let best: Vec2 | null = null;
-  let bestD = Infinity;
-  for (const u of allies) {
-    if (!u.alive) continue;
-    const d = distance(pos, u.position);
-    if (d < bestD) {
-      bestD = d;
-      best = u.position;
-    }
-  }
-  return best;
 }
 
 // 未使用警告抑止
